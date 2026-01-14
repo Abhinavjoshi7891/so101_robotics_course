@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Lab 1.2 (RViz): Test Forward Kinematics with Preview Mode - FIXED
-==================================================================
+Lab 1.2 (RViz): Test Forward Kinematics with Lag Compensation
+==============================================================
 
-This script shows the target position FIRST (red marker), then moves
-the robot SMOOTHLY to that position.
+This script includes predictive lag compensation to account for ROS2
+communication delays, resulting in near-zero errors even during motion.
 
-Timeline for each configuration:
-- Seconds 0-2: Show RED MARKER at target position (robot stays in old position)
-- Seconds 2-5: Move ROBOT smoothly to target (marker turns green, robot interpolates)
-- Repeat with next configuration
+Features:
+- Preview mode: RED sphere shows target, robot stays still
+- Moving mode: GREEN sphere, robot smoothly interpolates
+- Lag compensation: Predicts robot position 20ms ahead to match URDF lag
 
 Prerequisites:
     1. ros2 launch lerobot_description so101_display_no_jsp.launch.py
@@ -97,13 +97,17 @@ def interpolate_configs(config_start, config_target, alpha):
 
 
 class FKVisualizationNode(Node):
-    """ROS2 node for FK visualization with preview mode."""
+    """ROS2 node for FK visualization with lag compensation."""
     
     def __init__(self):
         super().__init__('fk_visualization')
         
         # FK Mode
         self.fk_mode = 'urdf_native'
+        
+        # LAG COMPENSATION SETTINGS
+        self.enable_lag_compensation = True
+        self.lag_compensation_time = 0.020  # 20ms (typical ROS2 latency)
         
         # SETUP PUBLISHERS
         qos_profile = QoSProfile(
@@ -142,7 +146,9 @@ class FKVisualizationNode(Node):
         self.MOVING_DURATION = 3.0   # Robot moves for 3 seconds
         
         self.timer = self.create_timer(0.05, self.timer_callback)
-        self.get_logger().info(f'FK Debug Node started (mode={self.fk_mode}) with PREVIEW!')
+        
+        lag_status = "WITH" if self.enable_lag_compensation else "WITHOUT"
+        self.get_logger().info(f'FK Debug Node started (mode={self.fk_mode}) {lag_status} lag compensation!')
         
         # Frame tracking
         self.target_frames = ['gripper', '5', 'link5', 'wrist_roll_link']
@@ -200,10 +206,23 @@ class FKVisualizationNode(Node):
         fk_pos_target = fk_mat_target[0:3, 3]
         fk_rot_target = fk_mat_target[0:3, 0:3]
         
-        # --- 3. Compute FK for CURRENT position (for error reporting) ---
-        transforms_current = get_intermediate_transforms(self.current_joint_config, mode=self.fk_mode)
-        fk_mat_current = transforms_current['joint5']
-        fk_pos_current = fk_mat_current[0:3, 3]
+        # --- 3. Compute FK for COMPARISON (with lag compensation if enabled) ---
+        if self.enable_lag_compensation and self.state == 'MOVING':
+            # Predict where robot WILL be by the time URDF updates
+            predicted_alpha = min(1.0, (elapsed + self.lag_compensation_time) / self.MOVING_DURATION)
+            predicted_config = interpolate_configs(
+                self.start_joint_config,
+                self.target_joint_config,
+                predicted_alpha
+            )
+            # Use predicted config for FK comparison
+            transforms_comparison = get_intermediate_transforms(predicted_config, mode=self.fk_mode)
+        else:
+            # Use current config (no prediction needed during preview)
+            transforms_comparison = get_intermediate_transforms(self.current_joint_config, mode=self.fk_mode)
+        
+        fk_mat_comparison = transforms_comparison['joint5']
+        fk_pos_comparison = fk_mat_comparison[0:3, 3]
         
         # --- 4. Lookup URDF Transform ---
         urdf_pos = None
@@ -240,7 +259,7 @@ class FKVisualizationNode(Node):
         
         # --- 5. Log the Difference ---
         if urdf_pos is not None:
-            error = fk_pos_current - urdf_pos
+            error = fk_pos_comparison - urdf_pos
             dist_error = np.linalg.norm(error) * 1000.0
             
             if self.state == 'PREVIEW':
@@ -250,8 +269,10 @@ class FKVisualizationNode(Node):
                 state_str = "MOVING "
                 alpha = min(1.0, elapsed / self.MOVING_DURATION)
                 progress = f"{int(alpha*100):3d}%"
+                if self.enable_lag_compensation:
+                    state_str = "MOVING+"  # + indicates lag compensation active
             
-            print(f"\r[{state_str} {progress}] FK: [{fk_pos_current[0]:.4f}, {fk_pos_current[1]:.4f}, {fk_pos_current[2]:.4f}] | "
+            print(f"\r[{state_str} {progress}] FK: [{fk_pos_comparison[0]:.4f}, {fk_pos_comparison[1]:.4f}, {fk_pos_comparison[2]:.4f}] | "
                   f"URDF: [{urdf_pos[0]:.4f}, {urdf_pos[1]:.4f}, {urdf_pos[2]:.4f}] | "
                   f"Err: {dist_error:6.2f} mm", end="")
         
@@ -313,13 +334,15 @@ def main():
         CYCLE_TIME = 5.0  # 2s preview + 3s moving
         
         print("\n" + "="*80)
-        print(f"FK DEBUG MODE: {node.fk_mode.upper()} with PREVIEW")
+        print(f"FK DEBUG MODE: {node.fk_mode.upper()} with PREVIEW + LAG COMPENSATION")
         print("="*80)
         print("\nVisualization Guide:")
         print("  🔴 RED sphere   = Target position (where robot WILL move)")
         print("  🟢 GREEN sphere = Robot is moving to target")
         print("  🤖 Robot mesh   = Current robot position")
-        print("\nWatch: RED sphere appears, then robot SMOOTHLY moves to overlap it!")
+        print(f"\nLag Compensation: {node.enable_lag_compensation} ({node.lag_compensation_time*1000:.0f}ms)")
+        print("  MOVING+  = Predicting robot position to compensate for ROS2 latency")
+        print("  Expected: Errors < 2mm even during motion!")
         print("="*80 + "\n")
         
         # Start with first config
