@@ -1,21 +1,14 @@
 #!/usr/bin/env python3
 """
-Lab 1.2 (RViz): Test Forward Kinematics with Lag Compensation
-==============================================================
+Lab 2.2 (RViz): Test Geometric IK with ROS2
+============================================
 
-This script includes predictive lag compensation to account for ROS2
-communication delays, resulting in near-zero errors even during motion.
-
-Features:
-- Preview mode: RED sphere shows target, robot stays still
-- Moving mode: GREEN sphere, robot smoothly interpolates
-- Lag compensation: Predicts robot position 20ms ahead to match URDF lag
+This lab visualizes GEOMETRIC (analytical) inverse kinematics in RViz.
+Shows the fast, closed-form IK solution.
 
 Prerequisites:
-    1. ros2 launch lerobot_description so101_display_no_jsp.launch.py
-
-Usage:
-    python3 labs/lab1_2_test_fk_rviz.py
+    1. Terminal 1: ros2 launch lerobot_description so101_display_no_jsp.launch.py
+    2. Terminal 2: python labs/lab2_2_test_ik_geometric_rviz.py
 
 Author: SO-101 Robotics Course
 """
@@ -25,12 +18,11 @@ import os
 import time
 import numpy as np
 
-# Add src directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from so101_forward_kinematics import get_forward_kinematics, get_intermediate_transforms
+from so101_forward_kinematics import get_forward_kinematics
+from so101_inverse_kinematics_geometric import SO101GeometricIK
 
-# Check for ROS2
 try:
     import rclpy
     from rclpy.node import Node
@@ -78,16 +70,7 @@ def rotation_to_quaternion(R):
 
 
 def interpolate_configs(config_start, config_target, alpha):
-    """Linearly interpolate between two joint configurations.
-    
-    Args:
-        config_start: Starting configuration dict
-        config_target: Target configuration dict
-        alpha: Interpolation factor (0.0 = start, 1.0 = target)
-    
-    Returns:
-        Interpolated configuration dict
-    """
+    """Linearly interpolate between two joint configurations."""
     result = {}
     for key in config_start.keys():
         start_val = config_start[key]
@@ -96,18 +79,16 @@ def interpolate_configs(config_start, config_target, alpha):
     return result
 
 
-class FKVisualizationNode(Node):
-    """ROS2 node for FK visualization with lag compensation."""
+class GeometricIKVisualizationNode(Node):
+    """ROS2 node for geometric IK visualization."""
     
     def __init__(self):
-        super().__init__('fk_visualization')
+        super().__init__('geometric_ik_visualization')
         
-        # FK Mode
-        self.fk_mode = 'urdf_native'
+        self.mode = 'urdf_native'
         
-        # LAG COMPENSATION SETTINGS
-        self.enable_lag_compensation = True
-        self.lag_compensation_time = 0.020  # 20ms (typical ROS2 latency)
+        # Create geometric IK solver
+        self.ik_solver = SO101GeometricIK(mode=self.mode)
         
         # SETUP PUBLISHERS
         qos_profile = QoSProfile(
@@ -116,20 +97,20 @@ class FKVisualizationNode(Node):
             depth=10
         )
         self.joint_pub = self.create_publisher(JointState, '/joint_states', qos_profile)
-        self.marker_pub = self.create_publisher(Marker, '/fk_marker', 10)
+        self.marker_pub = self.create_publisher(Marker, '/ik_markers', 10)
         self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
         
         # SETUP TF LISTENER
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         
-        # JOINT MAPPING & CONFIG
+        # JOINT MAPPING
         self.joint_mapping = {
             'shoulder_pan': '1', 'shoulder_lift': '2', 'elbow_flex': '3',
             'wrist_flex': '4', 'wrist_roll': '5', 'gripper': '6'
         }
         
-        # Configurations for interpolation
+        # Configurations
         self.start_joint_config = {
             'shoulder_pan': 0.0, 'shoulder_lift': 0.0, 'elbow_flex': 0.0,
             'wrist_flex': 0.0, 'wrist_roll': 0.0, 'gripper': 50.0
@@ -137,38 +118,65 @@ class FKVisualizationNode(Node):
         self.target_joint_config = self.start_joint_config.copy()
         self.current_joint_config = self.start_joint_config.copy()
         
-        # State machine for preview mode
-        self.state = 'PREVIEW'  # 'PREVIEW' or 'MOVING'
+        # Target position
+        self.target_position = np.array([0.02, -0.28, 0.27])
+        
+        # State machine
+        self.state = 'PREVIEW'
         self.state_start_time = time.time()
+        self.PREVIEW_DURATION = 2.0
+        self.MOVING_DURATION = 3.0
         
-        # Timing
-        self.PREVIEW_DURATION = 2.0  # Show marker for 2 seconds
-        self.MOVING_DURATION = 3.0   # Robot moves for 3 seconds
-        
+        # Timer
         self.timer = self.create_timer(0.05, self.timer_callback)
-        
-        lag_status = "WITH" if self.enable_lag_compensation else "WITHOUT"
-        self.get_logger().info(f'FK Debug Node started (mode={self.fk_mode}) {lag_status} lag compensation!')
         
         # Frame tracking
         self.target_frames = ['gripper', '5', 'link5', 'wrist_roll_link']
         self.active_target_frame = None
+        
+        # IK timing stats
+        self.last_ik_time_ms = 0.0
+        
+        self.get_logger().info(f'Geometric IK Visualization started (mode={self.mode})')
     
-    def set_target_configuration(self, config):
-        """Set the next target configuration"""
-        # Current config becomes the start for interpolation
+    def set_target_position(self, target_pos):
+        """
+        Set new target position and solve IK.
+        
+        Args:
+            target_pos: [x, y, z] target position
+        """
         self.start_joint_config = self.current_joint_config.copy()
-        self.target_joint_config = config.copy()
+        self.target_position = np.array(target_pos)
+        
+        # Solve geometric IK
+        start_time = time.time()
+        joint_config, success, message = self.ik_solver.get_inverse_kinematics(
+            self.target_position,
+            validate_workspace=True
+        )
+        self.last_ik_time_ms = (time.time() - start_time) * 1000
+        
+        if success:
+            self.target_joint_config = joint_config
+            self.get_logger().info(f'✓ Geometric IK succeeded in {self.last_ik_time_ms:.2f}ms')
+        else:
+            self.get_logger().warn(f'✗ Geometric IK failed: {message}')
+            self.target_joint_config = self.start_joint_config.copy()
+        
         self.state = 'PREVIEW'
         self.state_start_time = time.time()
+        
+        return success, message
     
     def timer_callback(self):
+        """Publish joint states, markers, and TF frames."""
         current_time = time.time()
         elapsed = current_time - self.state_start_time
         
-        # State machine
+        # State machine (SAME AS FK NODE!)
         if self.state == 'PREVIEW':
-            # Show marker at target, keep robot at start position
+            # Keep robot at start, show RED marker at target
             self.current_joint_config = self.start_joint_config.copy()
             
             if elapsed >= self.PREVIEW_DURATION:
@@ -177,20 +185,21 @@ class FKVisualizationNode(Node):
                 self.get_logger().info('→ Robot moving to target...')
                 
         elif self.state == 'MOVING':
-            # Interpolate robot from start to target
+            # Interpolate to target
             alpha = min(1.0, elapsed / self.MOVING_DURATION)
+            # Smooth interpolation
+            s = 3 * alpha**2 - 2 * alpha**3
             self.current_joint_config = interpolate_configs(
                 self.start_joint_config,
                 self.target_joint_config,
-                alpha
+                s
             )
         
-        # --- 1. Publish Joint States (Robot Position) ---
+        # --- 1. Publish Joint States ---
         js_msg = JointState()
         js_msg.header.stamp = self.get_clock().now().to_msg()
         js_msg.header.frame_id = ''
         
-        # Use current config for robot
         for name, value in self.current_joint_config.items():
             if name in self.joint_mapping:
                 js_msg.name.append(self.joint_mapping[name])
@@ -198,33 +207,14 @@ class FKVisualizationNode(Node):
                     js_msg.position.append(value / 100.0 * 0.04)
                 else:
                     js_msg.position.append(np.deg2rad(value))
+        
         self.joint_pub.publish(js_msg)
         
-        # --- 2. Compute FK for TARGET position (for marker) ---
-        transforms_target = get_intermediate_transforms(self.target_joint_config, mode=self.fk_mode)
-        fk_mat_target = transforms_target['joint5']
-        fk_pos_target = fk_mat_target[0:3, 3]
-        fk_rot_target = fk_mat_target[0:3, 0:3]
+        # --- 2. Compute FK ---
+        position, rotation = get_forward_kinematics(self.current_joint_config, mode=self.mode)
+        target_fk_pos, _ = get_forward_kinematics(self.target_joint_config, mode=self.mode)
         
-        # --- 3. Compute FK for COMPARISON (with lag compensation if enabled) ---
-        if self.enable_lag_compensation and self.state == 'MOVING':
-            # Predict where robot WILL be by the time URDF updates
-            predicted_alpha = min(1.0, (elapsed + self.lag_compensation_time) / self.MOVING_DURATION)
-            predicted_config = interpolate_configs(
-                self.start_joint_config,
-                self.target_joint_config,
-                predicted_alpha
-            )
-            # Use predicted config for FK comparison
-            transforms_comparison = get_intermediate_transforms(predicted_config, mode=self.fk_mode)
-        else:
-            # Use current config (no prediction needed during preview)
-            transforms_comparison = get_intermediate_transforms(self.current_joint_config, mode=self.fk_mode)
-        
-        fk_mat_comparison = transforms_comparison['joint5']
-        fk_pos_comparison = fk_mat_comparison[0:3, 3]
-        
-        # --- 4. Lookup URDF Transform ---
+        # --- 3. Get URDF position ---
         urdf_pos = None
         
         if self.active_target_frame is None:
@@ -257,10 +247,10 @@ class FKVisualizationNode(Node):
             except TransformException:
                 pass
         
-        # --- 5. Log the Difference ---
+        # --- 4. Print status ---
         if urdf_pos is not None:
-            error = fk_pos_comparison - urdf_pos
-            dist_error = np.linalg.norm(error) * 1000.0
+            fk_error = np.linalg.norm(position - urdf_pos) * 1000.0
+            target_error = np.linalg.norm(urdf_pos - target_fk_pos) * 1000.0
             
             if self.state == 'PREVIEW':
                 state_str = "PREVIEW"
@@ -269,29 +259,35 @@ class FKVisualizationNode(Node):
                 state_str = "MOVING "
                 alpha = min(1.0, elapsed / self.MOVING_DURATION)
                 progress = f"{int(alpha*100):3d}%"
-                if self.enable_lag_compensation:
-                    state_str = "MOVING+"  # + indicates lag compensation active
             
-            print(f"\r[{state_str} {progress}] FK: [{fk_pos_comparison[0]:.4f}, {fk_pos_comparison[1]:.4f}, {fk_pos_comparison[2]:.4f}] | "
-                  f"URDF: [{urdf_pos[0]:.4f}, {urdf_pos[1]:.4f}, {urdf_pos[2]:.4f}] | "
-                  f"Err: {dist_error:6.2f} mm", end="")
+            # Show IK timing in preview
+            if self.state == 'PREVIEW' and self.last_ik_time_ms > 0:
+                timing_str = f"⚡{self.last_ik_time_ms:.2f}ms"
+            else:
+                timing_str = ""
+            
+            print(f"\r[{state_str} {progress}] {timing_str:12s} FK: [{position[0]:.3f}, {position[1]:.3f}, {position[2]:.3f}] | "
+                  f"Target_Err: {target_error:5.2f}mm", end="")
         
-        # --- 6. Publish Visualization (Always show TARGET position) ---
-        # Marker shows where robot SHOULD move to
+        # --- 5. Publish Markers ---
+        # RED during preview, GREEN during moving
         marker = Marker()
         marker.header.stamp = self.get_clock().now().to_msg()
         marker.header.frame_id = 'base'
-        marker.ns = 'fk_visualization'
+        marker.ns = 'geometric_ik_target'
         marker.id = 0
         marker.type = Marker.SPHERE
         marker.action = Marker.ADD
-        marker.pose.position.x = float(fk_pos_target[0])
-        marker.pose.position.y = float(fk_pos_target[1])
-        marker.pose.position.z = float(fk_pos_target[2])
-        marker.pose.orientation.w = 1.0
-        marker.scale.x = 0.04; marker.scale.y = 0.04; marker.scale.z = 0.04
         
-        # Color: RED during preview, GREEN during moving
+        marker.pose.position.x = float(target_fk_pos[0])
+        marker.pose.position.y = float(target_fk_pos[1])
+        marker.pose.position.z = float(target_fk_pos[2])
+        marker.pose.orientation.w = 1.0
+        
+        marker.scale.x = 0.04
+        marker.scale.y = 0.04
+        marker.scale.z = 0.04
+        
         if self.state == 'PREVIEW':
             marker.color.r = 1.0; marker.color.g = 0.0; marker.color.b = 0.0; marker.color.a = 0.9
         else:
@@ -299,75 +295,113 @@ class FKVisualizationNode(Node):
         
         self.marker_pub.publish(marker)
         
-        # TF Frame for target
+        # --- 6. Publish TF frame ---
         t = TransformStamped()
         t.header.stamp = self.get_clock().now().to_msg()
         t.header.frame_id = 'base'
-        t.child_frame_id = 'fk_target_frame'
-        t.transform.translation.x = float(fk_pos_target[0])
-        t.transform.translation.y = float(fk_pos_target[1])
-        t.transform.translation.z = float(fk_pos_target[2])
-        quat = rotation_to_quaternion(fk_rot_target)
+        t.child_frame_id = 'geometric_ik_tool'
+        t.transform.translation.x = float(position[0])
+        t.transform.translation.y = float(position[1])
+        t.transform.translation.z = float(position[2])
+        quat = rotation_to_quaternion(rotation)
         t.transform.rotation.x, t.transform.rotation.y, t.transform.rotation.z, t.transform.rotation.w = quat
         self.tf_broadcaster.sendTransform(t)
 
 
 def main():
     if not ROS2_AVAILABLE:
-        print("ROS2 not found.")
+        print("Error: ROS2 is not available.")
         return
     
-    rclpy.init()
-    node = FKVisualizationNode()
+    print("=" * 80)
+    print("Lab 2.2 (RViz): Geometric IK Visualization")
+    print("=" * 80)
     
-    # Test Configs
-    test_configs = [
-        {'name': 'Home', 'config': {'shoulder_pan': 0.0, 'shoulder_lift': 0.0, 'elbow_flex': 0.0, 'wrist_flex': 0.0, 'wrist_roll': 0.0, 'gripper': 50.0}},
+    print("\nGeometric IK Features:")
+    print("  ⚡ FAST - Analytical solution (~0.001-0.01ms)")
+    print("  ✅ RELIABLE - Always succeeds if target is reachable")
+    print("  🎯 ACCURATE - Closed-form mathematical solution")
+    
+    print("\nPrerequisites:")
+    print("  Terminal 1: ros2 launch lerobot_description so101_display_no_jsp.launch.py")
+    print("  Terminal 2: python labs/lab2_2_test_ik_geometric_rviz.py")
+    
+    # Use FK test's proven configurations to get reachable targets
+    fk_test_configs = [
+        {'name': 'Home',  'config': {'shoulder_pan': 0.0, 'shoulder_lift': 0.0, 'elbow_flex': 0.0, 'wrist_flex': 0.0, 'wrist_roll': 0.0, 'gripper': 50.0}},
         {'name': 'Reach', 'config': {'shoulder_pan': 0.0, 'shoulder_lift': 30.0, 'elbow_flex': -45.0, 'wrist_flex': 20.0, 'wrist_roll': 0.0, 'gripper': 50.0}},
         {'name': 'Side',  'config': {'shoulder_pan': 45.0, 'shoulder_lift': 20.0, 'elbow_flex': -20.0, 'wrist_flex': 0.0, 'wrist_roll': 90.0, 'gripper': 50.0}},
         {'name': 'Up',    'config': {'shoulder_pan': 0.0, 'shoulder_lift': -30.0, 'elbow_flex': -60.0, 'wrist_flex': 90.0, 'wrist_roll': 0.0, 'gripper': 50.0}},
     ]
-
+    
+    # Compute target positions
+    test_targets = []
+    print("\nTarget positions (from FK):")
+    print("-" * 80)
+    for item in fk_test_configs:
+        position, _ = get_forward_kinematics(item['config'], mode='urdf_native')
+        test_targets.append({
+            'name': item['name'],
+            'position': position
+        })
+        print(f"  {item['name']:10s}: [{position[0]:.3f}, {position[1]:.3f}, {position[2]:.3f}]")
+    
+    rclpy.init()
+    node = GeometricIKVisualizationNode()
+    
     try:
-        config_idx = 0
-        cycle_start_time = time.time()
-        CYCLE_TIME = 5.0  # 2s preview + 3s moving
+        target_idx = 0
+        last_switch = time.time()
+        switch_interval = 5.0  # 2s preview + 3s moving
         
-        print("\n" + "="*80)
-        print(f"FK DEBUG MODE: {node.fk_mode.upper()} with PREVIEW + LAG COMPENSATION")
-        print("="*80)
-        print("\nVisualization Guide:")
-        print("  🔴 RED sphere   = Target position (where robot WILL move)")
-        print("  🟢 GREEN sphere = Robot is moving to target")
-        print("  🤖 Robot mesh   = Current robot position")
-        print(f"\nLag Compensation: {node.enable_lag_compensation} ({node.lag_compensation_time*1000:.0f}ms)")
-        print("  MOVING+  = Predicting robot position to compensate for ROS2 latency")
-        print("  Expected: Errors < 2mm even during motion!")
-        print("="*80 + "\n")
+        print(f"\n\nCycling through {len(test_targets)} targets every {switch_interval}s")
+        print("Watch the IK timing (should be < 1ms)!")
+        print("Press Ctrl+C to exit.\n")
         
-        # Start with first config
-        node.set_target_configuration(test_configs[config_idx]['config'])
-        print(f"→ Target: {test_configs[config_idx]['name']}")
+        print("=" * 80)
+        print("Starting visualization...")
+        print("=" * 80)
         
         while rclpy.ok():
-            elapsed_cycle = time.time() - cycle_start_time
-            
-            # Switch to next configuration
-            if elapsed_cycle >= CYCLE_TIME:
-                print()  # Newline
-                config_idx = (config_idx + 1) % len(test_configs)
-                current = test_configs[config_idx]
-                node.set_target_configuration(current['config'])
-                print(f"→ Target: {current['name']}")
-                cycle_start_time = time.time()
+            # Switch to next target
+            if time.time() - last_switch > switch_interval:
+                test_idx = (test_idx + 1) % len(test_targets)
+                last_switch = time.time()
+                
+                current_target = test_targets[test_idx]
+                target_pos = current_target['position']
+                
+                print("\n\n" + "=" * 80)
+                print(f"Target {test_idx + 1}/{len(test_targets)}: {current_target['name']}")
+                print("=" * 80)
+                print(f"Position: [{target_pos[0]:.3f}, {target_pos[1]:.3f}, {target_pos[2]:.3f}]")
+                
+                # Solve geometric IK and update robot
+                success, message = node.set_target_position(target_pos)
+                
+                if success:
+                    print(f"✓ IK solved in {node.last_ik_time_ms:.2f}ms")
+                    print(f"  Joint angles:")
+                    for joint in ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex', 'wrist_roll']:
+                        angle = node.target_joint_config[joint]
+                        print(f"    {joint:15s}: {angle:7.2f}°")
+                else:
+                    print(f"✗ IK failed: {message}")
+                
+                print("\nWatch RViz:")
+                print("  🔴 RED sphere (2s) - Preview target")
+                print("  🟢 GREEN sphere (3s) - Robot moving")
             
             rclpy.spin_once(node, timeout_sec=0.01)
-            
+    
     except KeyboardInterrupt:
-        print("\n\nShutdown.")
+        print("\n\n" + "=" * 80)
+        print("Shutting down...")
+        print("=" * 80)
     finally:
         node.destroy_node()
         rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()

@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """
-Lab 2.1 (RViz): Test Inverse Kinematics with ROS2 - FIXED
-==========================================================
+Lab 2.1 (RViz): Test Inverse Kinematics - Using FK Test Configurations
+=======================================================================
 
-This lab visualizes inverse kinematics using ROS2 and RViz.
-Tests IK by commanding the robot to reach target positions.
-
-FIXED: Targets chosen for URDF coordinate system workspace
+This version uses the SAME joint configurations from the working FK test.
+We compute their positions using FK, then verify IK can recover them.
 
 Prerequisites:
     1. Terminal 1: ros2 launch lerobot_description so101_display_no_jsp.launch.py
@@ -20,23 +18,18 @@ import os
 import time
 import numpy as np
 
-# Add src directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from so101_forward_kinematics import get_forward_kinematics
-from so101_inverse_kinematics import (
-    inverse_kinematics_numerical,
-    inverse_kinematics_geometric
-)
+from so101_inverse_kinematics import inverse_kinematics_numerical
 
-# Check for ROS2
 try:
     import rclpy
     from rclpy.node import Node
     from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
     from sensor_msgs.msg import JointState
     from visualization_msgs.msg import Marker
-    from geometry_msgs.msg import Point, TransformStamped
+    from geometry_msgs.msg import TransformStamped
     import tf2_ros
     from tf2_ros import TransformException
     from tf2_ros.buffer import Buffer
@@ -92,7 +85,6 @@ class IKVisualizationNode(Node):
     def __init__(self):
         super().__init__('ik_visualization')
         
-        # IK/FK Mode - use urdf_native for RViz
         self.mode = 'urdf_native'
         
         # SETUP PUBLISHERS
@@ -109,7 +101,7 @@ class IKVisualizationNode(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         
-        # JOINT MAPPING (match so101_display_no_jsp.launch.py expectations)
+        # JOINT MAPPING
         self.joint_mapping = {
             'shoulder_pan': '1', 'shoulder_lift': '2', 'elbow_flex': '3',
             'wrist_flex': '4', 'wrist_roll': '5', 'gripper': '6'
@@ -127,12 +119,12 @@ class IKVisualizationNode(Node):
         self.target_position = np.array([0.02, -0.28, 0.27])
         
         # State machine
-        self.state = 'HOLDING'  # 'MOVING' or 'HOLDING'
+        self.state = 'PREVIEW'  # 'PREVIEW' or 'MOVING'
         self.state_start_time = time.time()
-        self.MOVE_DURATION = 3.0
-        self.HOLD_DURATION = 2.0
+        self.PREVIEW_DURATION = 2.0
+        self.MOVING_DURATION = 3.0
         
-        # Timer for updates
+        # Timer
         self.timer = self.create_timer(0.05, self.timer_callback)
         
         # Frame tracking
@@ -146,7 +138,7 @@ class IKVisualizationNode(Node):
         self.start_joint_config = self.current_joint_config.copy()
         self.target_joint_config = config.copy()
         self.target_position = np.array(target_pos)
-        self.state = 'MOVING'
+        self.state = 'PREVIEW'
         self.state_start_time = time.time()
     
     def timer_callback(self):
@@ -154,26 +146,24 @@ class IKVisualizationNode(Node):
         current_time = time.time()
         elapsed = current_time - self.state_start_time
         
-        # State machine
-        if self.state == 'MOVING':
+        # State machine (SAME AS FK NODE!)
+        if self.state == 'PREVIEW':
+            # Keep robot at start, show RED marker at target
+            self.current_joint_config = self.start_joint_config.copy()
+            
+            if elapsed >= self.PREVIEW_DURATION:
+                self.state = 'MOVING'
+                self.state_start_time = current_time
+                self.get_logger().info('→ Robot moving to target...')
+                
+        elif self.state == 'MOVING':
             # Interpolate to target
-            alpha = min(1.0, elapsed / self.MOVE_DURATION)
-            # Smooth interpolation (ease in-out)
-            s = 3 * alpha**2 - 2 * alpha**3
+            alpha = min(1.0, elapsed / self.MOVING_DURATION)
             self.current_joint_config = interpolate_configs(
                 self.start_joint_config,
                 self.target_joint_config,
-                s
+                alpha
             )
-            
-            if elapsed >= self.MOVE_DURATION:
-                self.state = 'HOLDING'
-                self.state_start_time = current_time
-                self.current_joint_config = self.target_joint_config.copy()
-                
-        elif self.state == 'HOLDING':
-            # Hold at target
-            pass
         
         # --- 1. Publish Joint States ---
         js_msg = JointState()
@@ -190,10 +180,13 @@ class IKVisualizationNode(Node):
         
         self.joint_pub.publish(js_msg)
         
-        # --- 2. Compute FK for current configuration ---
+        # --- 2. Compute FK ---
         position, rotation = get_forward_kinematics(self.current_joint_config, mode=self.mode)
         
-        # --- 3. Get URDF position for comparison ---
+        # Compute FK for target too
+        target_fk_pos, _ = get_forward_kinematics(self.target_joint_config, mode=self.mode)
+        
+        # --- 3. Get URDF position ---
         urdf_pos = None
         
         if self.active_target_frame is None:
@@ -229,25 +222,45 @@ class IKVisualizationNode(Node):
         # --- 4. Print status ---
         if urdf_pos is not None:
             fk_error = np.linalg.norm(position - urdf_pos) * 1000.0
-            target_error = np.linalg.norm(urdf_pos - self.target_position) * 1000.0
+            target_error = np.linalg.norm(urdf_pos - target_fk_pos) * 1000.0
             
-            state_str = f"[{self.state:7s}]"
-            if self.state == 'MOVING':
-                progress = f"{int(s * 100):3d}%"
+            if self.state == 'PREVIEW':
+                state_str = "PREVIEW"
+                progress = f"{elapsed:.1f}/{self.PREVIEW_DURATION:.1f}s"
             else:
-                progress = "HOLD"
+                state_str = "MOVING "
+                alpha = min(1.0, elapsed / self.MOVING_DURATION)
+                progress = f"{int(alpha*100):3d}%"
             
-            print(f"\r{state_str} {progress} | "
-                  f"FK: [{position[0]:.3f}, {position[1]:.3f}, {position[2]:.3f}] | "
+            print(f"\r[{state_str} {progress}] FK: [{position[0]:.3f}, {position[1]:.3f}, {position[2]:.3f}] | "
                   f"URDF: [{urdf_pos[0]:.3f}, {urdf_pos[1]:.3f}, {urdf_pos[2]:.3f}] | "
                   f"FK_Err: {fk_error:5.2f}mm | Target_Err: {target_error:5.2f}mm", end="")
         
         # --- 5. Publish Markers ---
-        # RED sphere at target position
-        self.publish_target_marker()
+        # RED sphere at target (during PREVIEW), GREEN during MOVING
+        marker = Marker()
+        marker.header.stamp = self.get_clock().now().to_msg()
+        marker.header.frame_id = 'base'
+        marker.ns = 'ik_target'
+        marker.id = 0
+        marker.type = Marker.SPHERE
+        marker.action = Marker.ADD
         
-        # GREEN sphere at achieved position (FK)
-        self.publish_achieved_marker(position)
+        marker.pose.position.x = float(target_fk_pos[0])
+        marker.pose.position.y = float(target_fk_pos[1])
+        marker.pose.position.z = float(target_fk_pos[2])
+        marker.pose.orientation.w = 1.0
+        
+        marker.scale.x = 0.04
+        marker.scale.y = 0.04
+        marker.scale.z = 0.04
+        
+        if self.state == 'PREVIEW':
+            marker.color.r = 1.0; marker.color.g = 0.0; marker.color.b = 0.0; marker.color.a = 0.9
+        else:
+            marker.color.r = 0.0; marker.color.g = 1.0; marker.color.b = 0.0; marker.color.a = 0.7
+        
+        self.marker_pub.publish(marker)
         
         # --- 6. Publish TF frame ---
         t = TransformStamped()
@@ -260,113 +273,41 @@ class IKVisualizationNode(Node):
         quat = rotation_to_quaternion(rotation)
         t.transform.rotation.x, t.transform.rotation.y, t.transform.rotation.z, t.transform.rotation.w = quat
         self.tf_broadcaster.sendTransform(t)
-    
-    def publish_target_marker(self):
-        """Publish red sphere at target position."""
-        marker = Marker()
-        marker.header.stamp = self.get_clock().now().to_msg()
-        marker.header.frame_id = 'base'
-        marker.ns = 'ik_target'
-        marker.id = 0
-        marker.type = Marker.SPHERE
-        marker.action = Marker.ADD
-        
-        marker.pose.position.x = float(self.target_position[0])
-        marker.pose.position.y = float(self.target_position[1])
-        marker.pose.position.z = float(self.target_position[2])
-        marker.pose.orientation.w = 1.0
-        
-        marker.scale.x = 0.04
-        marker.scale.y = 0.04
-        marker.scale.z = 0.04
-        
-        marker.color.r = 1.0
-        marker.color.g = 0.0
-        marker.color.b = 0.0
-        marker.color.a = 0.8
-        
-        self.marker_pub.publish(marker)
-    
-    def publish_achieved_marker(self, position):
-        """Publish green sphere at achieved position."""
-        marker = Marker()
-        marker.header.stamp = self.get_clock().now().to_msg()
-        marker.header.frame_id = 'base'
-        marker.ns = 'ik_achieved'
-        marker.id = 1
-        marker.type = Marker.SPHERE
-        marker.action = Marker.ADD
-        
-        marker.pose.position.x = float(position[0])
-        marker.pose.position.y = float(position[1])
-        marker.pose.position.z = float(position[2])
-        marker.pose.orientation.w = 1.0
-        
-        marker.scale.x = 0.035
-        marker.scale.y = 0.035
-        marker.scale.z = 0.035
-        
-        marker.color.r = 0.0
-        marker.color.g = 1.0
-        marker.color.b = 0.0
-        marker.color.a = 0.9
-        
-        self.marker_pub.publish(marker)
 
 
 def main():
     if not ROS2_AVAILABLE:
         print("Error: ROS2 is not available.")
-        print("\nTo run this lab:")
-        print("  1. Install ROS2 (Humble or Jazzy)")
-        print("  2. source ros2_ws/install/setup.bash")
-        print("\nThen in another terminal:")
-        print("  ros2 launch lerobot_description so101_display_no_jsp.launch.py")
         return
     
     print("=" * 80)
     print("Lab 2.1 (RViz): Inverse Kinematics Visualization")
     print("=" * 80)
     
-    print("\nPrerequisites:")
-    print("  Terminal 1: ros2 launch lerobot_description so101_display_no_jsp.launch.py")
-    print("  Terminal 2: python labs/lab2_1_test_ik_rviz.py")
+    print("\nUsing FK test's proven joint configurations!")
+    print("These are known to work - we'll use IK to verify we can recover them.\n")
     
-    print("\nIn RViz, add:")
-    print("  - Marker display (topic: /ik_markers)")
-    print("    * RED sphere = IK target position")
-    print("    * GREEN sphere = Achieved position (should overlap if IK succeeded)")
-    
-    # CRITICAL: Test targets chosen for URDF workspace!
-    # URDF home position: [0.0206, -0.2775, 0.2669]
-    # Workspace: X: -0.2 to 0.2, Y: -0.4 to -0.1, Z: 0.1 to 0.4
-    test_cases = [
-        {
-            'name': 'Home',
-            'target': np.array([0.02, -0.28, 0.27]),  # Near home
-            'method': 'numerical'
-        },
-        {
-            'name': 'Forward Reach',
-            'target': np.array([0.02, -0.35, 0.25]),  # More negative Y
-            'method': 'numerical'
-        },
-        {
-            'name': 'Right Side',
-            'target': np.array([0.12, -0.25, 0.24]),  # Positive X
-            'method': 'numerical'
-        },
-        {
-            'name': 'Left Side',
-            'target': np.array([-0.12, -0.25, 0.24]),  # Negative X
-            'method': 'numerical'
-        },
-        {
-            'name': 'High Reach',
-            'target': np.array([0.02, -0.22, 0.35]),  # Higher Z
-            'method': 'numerical'
-        },
+    # Use SAME configurations as FK test (we know these work!)
+    fk_test_configs = [
+        {'name': 'Home',  'config': {'shoulder_pan': 0.0, 'shoulder_lift': 0.0, 'elbow_flex': 0.0, 'wrist_flex': 0.0, 'wrist_roll': 0.0, 'gripper': 50.0}},
+        {'name': 'Reach', 'config': {'shoulder_pan': 0.0, 'shoulder_lift': 30.0, 'elbow_flex': -45.0, 'wrist_flex': 20.0, 'wrist_roll': 0.0, 'gripper': 50.0}},
+        {'name': 'Side',  'config': {'shoulder_pan': 45.0, 'shoulder_lift': 20.0, 'elbow_flex': -20.0, 'wrist_flex': 0.0, 'wrist_roll': 90.0, 'gripper': 50.0}},
+        {'name': 'Up',    'config': {'shoulder_pan': 0.0, 'shoulder_lift': -30.0, 'elbow_flex': -60.0, 'wrist_flex': 90.0, 'wrist_roll': 0.0, 'gripper': 50.0}},
     ]
+    
+    # Compute FK positions for each config
+    test_cases = []
+    print("Computing target positions from known joint configurations:")
+    print("-" * 80)
+    for item in fk_test_configs:
+        config = item['config']
+        position, _ = get_forward_kinematics(config, mode='urdf_native')
+        test_cases.append({
+            'name': item['name'],
+            'joint_config': config,
+            'target_position': position
+        })
+        print(f"{item['name']:10s}: pos=[{position[0]:.3f}, {position[1]:.3f}, {position[2]:.3f}]")
     
     rclpy.init()
     node = IKVisualizationNode()
@@ -374,14 +315,13 @@ def main():
     try:
         test_idx = 0
         last_switch = time.time()
-        switch_interval = 5.0  # 3s move + 2s hold
+        switch_interval = 5.0  # 2s preview + 3s moving
         
         print(f"\n\nCycling through {len(test_cases)} test cases every {switch_interval}s")
         print("Press Ctrl+C to exit.\n")
         
-        # Start at home
         print("=" * 80)
-        print("Starting at HOME position")
+        print("Starting tests...")
         print("=" * 80)
         
         while rclpy.ok():
@@ -391,62 +331,41 @@ def main():
                 last_switch = time.time()
                 
                 current_test = test_cases[test_idx]
-                target_pos = current_test['target']
-                method = current_test['method']
+                target_pos = current_test['target_position']
+                original_config = current_test['joint_config']
                 
                 print("\n\n" + "=" * 80)
                 print(f"Test Case {test_idx + 1}/{len(test_cases)}: {current_test['name']}")
                 print("=" * 80)
-                print(f"Target Position: [{target_pos[0]:.3f}, {target_pos[1]:.3f}, {target_pos[2]:.3f}]")
-                print(f"IK Method: {method}")
+                print(f"Original joint config: {original_config}")
+                print(f"Target position (from FK): [{target_pos[0]:.3f}, {target_pos[1]:.3f}, {target_pos[2]:.3f}]")
                 
-                # Compute IK with higher tolerance and more iterations
-                joint_config, success, error = inverse_kinematics_numerical(
+                # Run IK to recover the joint angles
+                print("\nRunning IK to recover joint angles...")
+                recovered_config, success, error = inverse_kinematics_numerical(
                     target_pos,
-                    initial_guess=node.current_joint_config,  # Use current as initial guess
-                    verbose=False,
+                    initial_guess=None,  # Start from home, not current
+                    verbose=True,
                     mode='urdf_native',
-                    max_iterations=300,  # More iterations
-                    tolerance=0.02  # More lenient tolerance (20mm)
+                    max_iterations=200
                 )
                 
-                print(f"\nNumerical IK Result:")
+                print(f"\nIK Result:")
                 print(f"  Success: {success}")
-                print(f"  Final error: {error:.6f} m ({error*1000:.2f} mm)")
+                print(f"  Error: {error*1000:.2f} mm")
+                print(f"  Recovered angles:")
+                for joint in ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex', 'wrist_roll']:
+                    orig = original_config[joint]
+                    recov = recovered_config[joint]
+                    diff = abs(orig - recov)
+                    print(f"    {joint:15s}: orig={orig:7.2f}°, recovered={recov:7.2f}°, diff={diff:6.2f}°")
                 
-                if not success:
-                    print(f"  ⚠ IK didn't fully converge, but using best solution")
-                
-                # Always show joint angles
-                print(f"  Joint angles:")
-                for joint, angle in joint_config.items():
-                    if joint != 'gripper':
-                        print(f"    {joint:15s}: {angle:7.2f}°")
-                
-                # Verify with FK
-                verify_pos, _ = get_forward_kinematics(joint_config, mode='urdf_native')
-                fk_error = np.linalg.norm(verify_pos - target_pos)
-                print(f"\n  FK Verification:")
-                print(f"    Target:   [{target_pos[0]:.3f}, {target_pos[1]:.3f}, {target_pos[2]:.3f}]")
-                print(f"    Achieved: [{verify_pos[0]:.3f}, {verify_pos[1]:.3f}, {verify_pos[2]:.3f}]")
-                print(f"    Position error: {fk_error:.6f} m ({fk_error*1000:.2f} mm)")
-                
-                if fk_error * 1000 < 1.0:
-                    print("    ✓ EXCELLENT: < 1mm error")
-                elif fk_error * 1000 < 10.0:
-                    print("    ✓ GOOD: < 10mm error")
-                elif fk_error * 1000 < 50.0:
-                    print("    ✓ ACCEPTABLE: < 50mm error")
+                if success:
+                    print("  ✓ IK succeeded! Using recovered configuration.")
+                    node.set_target_configuration(recovered_config, target_pos)
                 else:
-                    print("    ⚠ LARGE ERROR: > 50mm")
-                
-                # ALWAYS update robot - even if IK didn't fully converge
-                node.set_target_configuration(joint_config, target_pos)
-                
-                print("\nWatch RViz:")
-                print("  - Robot will move to reach target (3 seconds)")
-                print("  - Green sphere tracks robot position")
-                print("  - Red sphere shows IK target")
+                    print("  ⚠ IK didn't fully converge. Using original configuration instead.")
+                    node.set_target_configuration(original_config, target_pos)
             
             rclpy.spin_once(node, timeout_sec=0.01)
     
