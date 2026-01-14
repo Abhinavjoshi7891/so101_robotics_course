@@ -365,14 +365,14 @@ def main():
         while rclpy.ok():
             # Switch to next target
             if time.time() - last_switch > switch_interval:
-                test_idx = (test_idx + 1) % len(test_targets)
+                target_idx = (target_idx + 1) % len(test_targets)
                 last_switch = time.time()
                 
-                current_target = test_targets[test_idx]
+                current_target = test_targets[target_idx]
                 target_pos = current_target['position']
                 
                 print("\n\n" + "=" * 80)
-                print(f"Target {test_idx + 1}/{len(test_targets)}: {current_target['name']}")
+                print(f"Target {target_idx + 1}/{len(test_targets)}: {current_target['name']}")
                 print("=" * 80)
                 print(f"Position: [{target_pos[0]:.3f}, {target_pos[1]:.3f}, {target_pos[2]:.3f}]")
                 

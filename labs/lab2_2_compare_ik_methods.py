@@ -277,6 +277,10 @@ def run_comparison_demo():
         target_idx = 0
         last_switch = time.time()
         
+        # Initialize config and success before loop
+        config = initial_config
+        success = False
+        
         while viewer.is_running():
             if time.time() - last_switch > 4.0:
                 # Switch to next target
