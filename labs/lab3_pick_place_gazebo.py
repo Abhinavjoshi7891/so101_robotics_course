@@ -45,6 +45,7 @@ try:
     from control_msgs.action import FollowJointTrajectory
     from builtin_interfaces.msg import Duration
     from geometry_msgs.msg import Pose, Point, Quaternion
+    from sensor_msgs.msg import JointState
     ROS2_AVAILABLE = True
     
     # Try MoveIt imports
@@ -65,6 +66,24 @@ try:
 
 except ImportError:
     pass
+
+
+# ==============================================================================
+# JOINT NAME MAPPING
+# ==============================================================================
+# The URDF uses numeric joint names, but we use descriptive names in code
+JOINT_NAME_MAPPING = {
+    'shoulder_pan': '1',
+    'shoulder_lift': '2',
+    'elbow_flex': '3',
+    'wrist_flex': '4',
+    'wrist_roll': '5',
+    'gripper': '6'
+}
+
+# For MoveIt and controllers, use numeric names directly
+ARM_JOINT_NAMES = ['1', '2', '3', '4', '5']
+GRIPPER_JOINT_NAME = '6'
 
 
 # ==============================================================================
@@ -101,10 +120,8 @@ def run_simple_trajectory():
                 10
             )
             
-            self.joint_names = [
-                'shoulder_pan', 'shoulder_lift', 'elbow_flex',
-                'wrist_flex', 'wrist_roll'
-            ]
+            # Use numeric joint names matching URDF
+            self.joint_names = ARM_JOINT_NAMES
             
             self.get_logger().info('Trajectory controller initialized')
         
@@ -129,7 +146,7 @@ def run_simple_trajectory():
         def send_gripper_command(self, position, duration_sec=0.5):
             """Control gripper (0=closed, 1=open)."""
             msg = JointTrajectory()
-            msg.joint_names = ['gripper']
+            msg.joint_names = [GRIPPER_JOINT_NAME]
             
             point = JointTrajectoryPoint()
             point.positions.append(position * 0.04)  # Scale to joint range
@@ -144,7 +161,7 @@ def run_simple_trajectory():
     
     # Define waypoints (in degrees)
     waypoints = [
-        # [shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll]
+        # [joint1, joint2, joint3, joint4, joint5]
         {'name': 'Home', 'joints': [0, 0, 0, 0, 0], 'gripper': 1.0},
         {'name': 'Above Pick', 'joints': [-45, 45, -45, 90, 0], 'gripper': 1.0},
         {'name': 'Pick', 'joints': [-45, 60, -60, 90, 0], 'gripper': 1.0},
@@ -197,6 +214,7 @@ def run_simple_trajectory():
 
 
 # ==============================================================================
+# ==============================================================================
 # MOVEIT-BASED PICK AND PLACE
 # ==============================================================================
 
@@ -218,6 +236,15 @@ def run_moveit_pick_place():
         def __init__(self):
             super().__init__('moveit_pick_place')
             
+            # Subscribe to joint states
+            self.current_state = None
+            self.joint_state_sub = self.create_subscription(
+                JointState,
+                '/joint_states',
+                self.joint_state_callback,
+                10
+            )
+            
             # MoveIt action client
             self._action_client = ActionClient(
                 self,
@@ -228,23 +255,40 @@ def run_moveit_pick_place():
             self.get_logger().info('Waiting for MoveIt action server...')
             self._action_client.wait_for_server()
             self.get_logger().info('Connected to MoveIt!')
+            
+            # Wait for first joint state
+            self.get_logger().info('Waiting for joint states...')
+            while self.current_state is None:
+                rclpy.spin_once(self, timeout_sec=0.1)
+            self.get_logger().info('Joint states received!')
+        
+        def joint_state_callback(self, msg):
+            """Store current joint state"""
+            self.current_state = dict(zip(msg.name, msg.position))
+        
+        def wait_for_motion_complete(self, timeout=5.0):
+            """Wait for robot to stop moving"""
+            self.get_logger().info('Waiting for motion to complete...')
+            time.sleep(timeout)
+            
+            # Spin a few times to get fresh joint states
+            for _ in range(10):
+                rclpy.spin_once(self, timeout_sec=0.01)
         
         def move_to_joint_positions(self, joint_positions):
             """Plan and execute motion to joint positions."""
+            # Wait a bit to ensure state is synchronized
+            self.wait_for_motion_complete(timeout=1.0)
+            
             goal_msg = MoveGroup.Goal()
             
             # Set planning group
             goal_msg.request.group_name = 'arm'
             
-            # Set joint constraints
+            # Set joint constraints using NUMERIC joint names
             constraints = Constraints()
             
-            joint_names = [
-                'shoulder_pan', 'shoulder_lift', 'elbow_flex',
-                'wrist_flex', 'wrist_roll'
-            ]
-            
-            for name, position in zip(joint_names, joint_positions):
+            for name, position in zip(ARM_JOINT_NAMES, joint_positions):
                 jc = JointConstraint()
                 jc.joint_name = name
                 jc.position = np.deg2rad(position)
@@ -256,6 +300,11 @@ def run_moveit_pick_place():
             goal_msg.request.goal_constraints.append(constraints)
             goal_msg.request.num_planning_attempts = 5
             goal_msg.request.allowed_planning_time = 5.0
+            
+            # IMPORTANT: Set workspace bounds and velocity scaling
+            goal_msg.request.workspace_parameters.header.frame_id = "base"
+            goal_msg.request.max_velocity_scaling_factor = 0.1  # Slower = more stable
+            goal_msg.request.max_acceleration_scaling_factor = 0.1
             
             # Send goal
             future = self._action_client.send_goal_async(goal_msg)
@@ -304,7 +353,7 @@ def run_moveit_pick_place():
                 print("Motion planning failed, stopping.")
                 break
             
-            time.sleep(0.5)
+            time.sleep(2.0)  # Increased wait time
         
         print("\nPick and place complete!")
         
@@ -324,8 +373,8 @@ def print_ros2_instructions():
     print("""
     This lab requires ROS2 and Gazebo. Follow these steps:
     
-    1. Install ROS2 Jazzy:
-       Follow: https://docs.ros.org/en/jazzy/Installation.html
+    1. Install ROS2 Humble:
+       Follow: https://docs.ros.org/en/humble/Installation.html
     
     2. Build the lerobot_ws workspace:
        cd so101_robotics_course/ros2_ws
