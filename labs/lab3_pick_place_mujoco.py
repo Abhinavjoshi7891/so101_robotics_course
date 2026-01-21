@@ -218,7 +218,12 @@ def show_pick_place_markers(viewer, pick_config, place_config, halfwidth=0.015):
     """
     # IMPORTANT: Use mode='mujoco' for correct coordinate system!
     pick_pos, pick_rot = get_forward_kinematics(pick_config, mode='mujoco')
+    print(f"[DEBUG] Pick FK Position: {pick_pos}")
+    print(f"[DEBUG] Pick FK Rotation:\n{pick_rot}")
+    
     place_pos, place_rot = get_forward_kinematics(place_config, mode='mujoco')
+    print(f"[DEBUG] Place FK Position: {place_pos}")
+    print(f"[DEBUG] Place FK Rotation:\n{place_rot}")
     
     # Pick marker (red, semi-transparent)
     mujoco.mjv_initGeom(

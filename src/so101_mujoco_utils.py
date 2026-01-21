@@ -126,14 +126,11 @@ def set_initial_pose(data, joint_angles: Dict[str, float], use_degrees: bool = T
     else:
         angles = joint_angles
     
-    # Set qpos for each joint
-    # Note: The order depends on your MJCF model definition
     for i, joint in enumerate(JOINT_NAMES):
         if i < len(data.qpos):
             if joint == 'gripper':
-                # Convert gripper value to appropriate range
-                # Adjust this based on your model's gripper definition
-                data.qpos[i] = angles[joint] / 100.0 * 0.04  # Scale to ~0-0.04 rad
+                # FIXED SCALING
+                data.qpos[i] = angles[joint] / 100.0 * 1.57 
             else:
                 data.qpos[i] = angles[joint]
 
@@ -186,7 +183,8 @@ def send_position_command(data, joint_angles: Dict[str, float], use_degrees: boo
     for i, joint in enumerate(JOINT_NAMES):
         if i < len(data.ctrl):
             if joint == 'gripper':
-                data.ctrl[i] = angles[joint] / 100.0 * 0.04
+                #data.ctrl[i] = angles[joint] / 100.0 * 0.04
+                data.ctrl[i] = angles[joint] / 100.0 * 1.57 # adjusted for gripper
             else:
                 data.ctrl[i] = angles[joint]
 
