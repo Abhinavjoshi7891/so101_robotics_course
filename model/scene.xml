@@ -15,10 +15,32 @@
             markrgb="0.8 0.8 0.8" width="300" height="300" />
         <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5"
             reflectance="0.2" />
+        
+        <!-- Materials for cylinders -->
+        <material name="red_material" rgba="0.8 0.1 0.1 1" />
+        <material name="green_material" rgba="0.1 0.8 0.1 1" />
     </asset>
 
     <worldbody>
         <light pos="0 0 3.5" dir="0 0 -1" directional="true" />
         <geom name="floor" size="0 0 0.05" pos="0 0 0" type="plane" material="groundplane" />
+        
+        <!-- PICK LOCATION CYLINDER (RED) -->
+        <!-- Gripper reaches: x=0.168, y=-0.279, z=0.161 -->
+        <!-- Cylinder sits on ground, so adjust z to account for gripper offset -->
+        <!-- The gripper approaches from above, so cylinder center should be lower -->
+        <body name="cylinder_pick" pos="0.168 -0.279 0.05">
+            <freejoint/>
+            <geom name="pick_cylinder" type="cylinder" size="0.0245 0.05" 
+                  material="red_material" mass="0.1" />
+        </body>
+        
+        <!-- PLACE LOCATION CYLINDER (GREEN) -->
+        <!-- Gripper reaches: x=-0.127, y=-0.279, z=0.161 -->
+        <body name="cylinder_place" pos="-0.127 -0.279 0.05">
+            <freejoint/>
+            <geom name="place_cylinder" type="cylinder" size="0.0245 0.05" 
+                  material="green_material" mass="0.1" />
+        </body>
     </worldbody>
 </mujoco>

@@ -25,7 +25,7 @@ Learning Objectives:
     3. Coordinate gripper actions with arm motion
 
 Usage:
-    python labs/lab3_pick_place_mujoco.py
+    python3 labs/lab3_pick_place_mujoco.py
 
 Author: SO-101 Robotics Course
 """
@@ -59,95 +59,16 @@ from so101_mujoco_utils import (
 # WAYPOINT DEFINITIONS
 # ==============================================================================
 
-# Starting configuration (above pick location, gripper open)
-STARTING_CONFIG = {
-    'shoulder_pan': -45.0,
-    'shoulder_lift': 45.0,
-    'elbow_flex': -45.0,
-    'wrist_flex': 90.0,
-    'wrist_roll': 0.0,
-    'gripper': 50.0  # Open
-}
+# ==============================================================================
+# FINE-TUNED WAYPOINTS (CENTERED & SAFE HEIGHTS)
+# ==============================================================================
 
-# Pick position (at object, gripper open)
-PICK_CONFIG = {
-    'shoulder_pan': -45.0,
-    'shoulder_lift': 60.0,  # Lower
-    'elbow_flex': -60.0,
-    'wrist_flex': 90.0,
-    'wrist_roll': 0.0,
-    'gripper': 50.0  # Open
-}
+# 1. ADJUSTED PAN: -45.4 centers exactly on x=0.216, y=-0.219
+# 2. ADJUSTED LIFT: 52.0 is safer (higher) for Place to avoid table collision
 
-# Pick position with closed gripper
-PICK_CONFIG_CLOSED = {
-    'shoulder_pan': -45.0,
-    'shoulder_lift': 60.0,
-    'elbow_flex': -60.0,
-    'wrist_flex': 90.0,
-    'wrist_roll': 0.0,
-    'gripper': 5.0  # Closed
-}
-
-# Lifted position (gripper closed)
-LIFT_CONFIG = {
-    'shoulder_pan': -45.0,
-    'shoulder_lift': 30.0,  # Higher
-    'elbow_flex': -30.0,
-    'wrist_flex': 90.0,
-    'wrist_roll': 0.0,
-    'gripper': 5.0  # Closed
-}
-
-# Transit position (high, for obstacle clearance)
-TRANSIT_CONFIG = {
-    'shoulder_pan': 0.0,
-    'shoulder_lift': 30.0,
-    'elbow_flex': -30.0,
-    'wrist_flex': 90.0,
-    'wrist_roll': 0.0,
-    'gripper': 5.0  # Closed
-}
-
-# Above place position
-PLACE_ABOVE_CONFIG = {
-    'shoulder_pan': 45.0,
-    'shoulder_lift': 30.0,
-    'elbow_flex': -30.0,
-    'wrist_flex': 90.0,
-    'wrist_roll': 0.0,
-    'gripper': 5.0  # Closed
-}
-
-# Place position (gripper closed)
-PLACE_CONFIG_CLOSED = {
-    'shoulder_pan': 45.0,
-    'shoulder_lift': 60.0,
-    'elbow_flex': -60.0,
-    'wrist_flex': 90.0,
-    'wrist_roll': 0.0,
-    'gripper': 5.0  # Closed
-}
-
-# Place position (gripper open - release object)
-PLACE_CONFIG_OPEN = {
-    'shoulder_pan': 45.0,
-    'shoulder_lift': 60.0,
-    'elbow_flex': -60.0,
-    'wrist_flex': 90.0,
-    'wrist_roll': 0.0,
-    'gripper': 50.0  # Open
-}
-
-# Final position (above place, gripper open)
-FINAL_CONFIG = {
-    'shoulder_pan': 45.0,
-    'shoulder_lift': 45.0,
-    'elbow_flex': -45.0,
-    'wrist_flex': 90.0,
-    'wrist_roll': 0.0,
-    'gripper': 50.0  # Open
-}
+# ==============================================================================
+# IMPROVED WAYPOINT DEFINITIONS - Within Safe Workspace
+# ==============================================================================
 
 # Home configuration
 HOME_CONFIG = {
@@ -159,6 +80,134 @@ HOME_CONFIG = {
     'gripper': 50.0
 }
 
+# Ready position (safe starting point)
+READY_CONFIG = {
+    'shoulder_pan': 0.0,
+    'shoulder_lift': 30.0,
+    'elbow_flex': -30.0,
+    'wrist_flex': 60.0,
+    'wrist_roll': 0.0,
+    'gripper': 50.0
+}
+
+# ======================================================================
+# PICK SEQUENCE (Right side of robot)
+# ======================================================================
+
+# Approach pick (above object)
+PICK_APPROACH_CONFIG = {
+    'shoulder_pan': -30.0,   # Less extreme than -45°
+    'shoulder_lift': 30.0,    # Moderate height
+    'elbow_flex': -30.0,
+    'wrist_flex': 60.0,
+    'wrist_roll': 0.0,
+    'gripper': 50.0  # Open
+}
+
+# At pick location (lower down to object)
+PICK_CONFIG = {
+    'shoulder_pan': -30.0,
+    'shoulder_lift': 45.0,    # Lower, but not extreme (was 60°)
+    'elbow_flex': -45.0,      # More moderate
+    'wrist_flex': 60.0,
+    'wrist_roll': 0.0,
+    'gripper': 50.0  # Open
+}
+
+# Grasping
+PICK_GRASP_CONFIG = {
+    'shoulder_pan': -30.0,
+    'shoulder_lift': 45.0,
+    'elbow_flex': -45.0,
+    'wrist_flex': 60.0,
+    'wrist_roll': 0.0,
+    'gripper': 5.0  # Closed
+}
+
+# Lift after grasp
+PICK_LIFT_CONFIG = {
+    'shoulder_pan': -30.0,
+    'shoulder_lift': 30.0,    # Back to moderate height
+    'elbow_flex': -30.0,
+    'wrist_flex': 60.0,
+    'wrist_roll': 0.0,
+    'gripper': 5.0  # Closed
+}
+
+# ======================================================================
+# TRANSIT (Move through center with clearance)
+# ======================================================================
+
+TRANSIT_CONFIG = {
+    'shoulder_pan': 0.0,      # Center position
+    'shoulder_lift': 20.0,    # High for clearance
+    'elbow_flex': -20.0,
+    'wrist_flex': 60.0,
+    'wrist_roll': 0.0,
+    'gripper': 5.0  # Closed
+}
+
+# ======================================================================
+# PLACE SEQUENCE (Left side of robot - MIRROR of pick)
+# ======================================================================
+
+# Approach place
+PLACE_APPROACH_CONFIG = {
+    'shoulder_pan': 30.0,     # Mirror: +30° instead of -30°
+    'shoulder_lift': 30.0,    # Same moderate height
+    'elbow_flex': -30.0,
+    'wrist_flex': 60.0,
+    'wrist_roll': 0.0,
+    'gripper': 5.0  # Closed
+}
+
+# At place location
+PLACE_CONFIG = {
+    'shoulder_pan': 30.0,
+    'shoulder_lift': 45.0,    # Same as pick (was 60° - too extreme)
+    'elbow_flex': -45.0,      # Same as pick
+    'wrist_flex': 60.0,
+    'wrist_roll': 0.0,
+    'gripper': 5.0  # Closed
+}
+
+# Release
+PLACE_RELEASE_CONFIG = {
+    'shoulder_pan': 30.0,
+    'shoulder_lift': 45.0,
+    'elbow_flex': -45.0,
+    'wrist_flex': 60.0,
+    'wrist_roll': 0.0,
+    'gripper': 50.0  # Open
+}
+
+# Retreat after placing
+PLACE_RETREAT_CONFIG = {
+    'shoulder_pan': 30.0,
+    'shoulder_lift': 30.0,
+    'elbow_flex': -30.0,
+    'wrist_flex': 60.0,
+    'wrist_roll': 0.0,
+    'gripper': 50.0  # Open
+}
+
+
+def get_current_config(model, data):
+    """Read current joint angles from MuJoCo and convert to degrees."""
+    # Helper to safely get joint value
+    def get_j(name):
+        return data.joint(name).qpos[0]
+
+    return {
+        'shoulder_pan': np.rad2deg(get_j('shoulder_pan')),
+        'shoulder_lift': np.rad2deg(get_j('shoulder_lift')),
+        'elbow_flex': np.rad2deg(get_j('elbow_flex')),
+        'wrist_flex': np.rad2deg(get_j('wrist_flex')),
+        'wrist_roll': np.rad2deg(get_j('wrist_roll')),
+        'gripper': np.rad2deg(get_j('gripper'))  # Note: Prismatic might need scaling if not 1:1 in XML
+    }
+
+
 
 def show_pick_place_markers(viewer, pick_config, place_config, halfwidth=0.015):
     """
@@ -167,9 +216,9 @@ def show_pick_place_markers(viewer, pick_config, place_config, halfwidth=0.015):
     Red cube: Pick location
     Green cube: Place location
     """
-    # Compute positions from FK
-    pick_pos, pick_rot = get_forward_kinematics(pick_config)
-    place_pos, place_rot = get_forward_kinematics(place_config)
+    # IMPORTANT: Use mode='mujoco' for correct coordinate system!
+    pick_pos, pick_rot = get_forward_kinematics(pick_config, mode='mujoco')
+    place_pos, place_rot = get_forward_kinematics(place_config, mode='mujoco')
     
     # Pick marker (red, semi-transparent)
     mujoco.mjv_initGeom(
@@ -199,18 +248,21 @@ def show_pick_place_markers(viewer, pick_config, place_config, halfwidth=0.015):
 
 def smooth_move(model, data, viewer, start_config, end_config, duration):
     """
-    Smoothly interpolate between two configurations.
-    
-    Uses cubic easing for smooth acceleration/deceleration.
+    Smoothly interpolate with EXPLICIT LOGGING of Position Error.
     """
     start_time = time.time()
+    steps = 0
+    
+    # Pre-calculate target position for logging comparison
+    target_pos, _ = get_forward_kinematics(end_config)
+    print(f"\n[MOVE START] Target: x={target_pos[0]:.4f}, y={target_pos[1]:.4f}, z={target_pos[2]:.4f}")
     
     while viewer.is_running() and (time.time() - start_time) < duration:
         t = (time.time() - start_time) / duration
         # Cubic ease in-out
         s = 3 * t**2 - 2 * t**3
         
-        # Interpolate each joint
+        # Interpolate command
         interp_config = {}
         for joint in start_config:
             start_val = start_config[joint]
@@ -220,13 +272,35 @@ def smooth_move(model, data, viewer, start_config, end_config, duration):
         send_position_command(data, interp_config, use_degrees=True)
         mujoco.mj_step(model, data)
         viewer.sync()
+        
+        # --- LOGGING BLOCK ---
+        steps += 1
+        if steps % 20 == 0:  # Log every 20 simulation steps
+            # 1. Get actual robot state
+            current_conf = get_current_config(model, data)
+            
+            # 2. Compute where the physical robot ACTUALLY is
+            curr_pos, _ = get_forward_kinematics(current_conf)
+            
+            # 3. Calculate distance to target
+            dist_err = np.linalg.norm(curr_pos - target_pos)
+            
+            print(f"  [Step {steps:03d}] "
+                  f"Curr: ({curr_pos[0]:.3f}, {curr_pos[1]:.3f}, {curr_pos[2]:.3f}) "
+                  f"-> Dist to Target: {dist_err*1000:.1f} mm")
+        # ---------------------
+        
         time.sleep(0.005)
     
-    # Ensure we reach exactly the end configuration
+    # Final check
     send_position_command(data, end_config, use_degrees=True)
-    for _ in range(10):
+    for _ in range(50): # Give it a moment to settle
         mujoco.mj_step(model, data)
-    viewer.sync()
+    
+    final_conf = get_current_config(model, data)
+    final_pos, _ = get_forward_kinematics(final_conf)
+    final_err = np.linalg.norm(final_pos - target_pos)
+    print(f"[MOVE END] Final Error: {final_err*1000:.2f} mm\n")
 
 
 def run_pick_and_place():
@@ -248,25 +322,26 @@ def run_pick_and_place():
     
     # Print waypoint positions using FK
     print("\nWaypoint Positions (computed via FK):")
-    waypoints = [
-        ("Starting", STARTING_CONFIG),
+    waypoints_preview = [
+        ("Ready", READY_CONFIG),
+        ("Pick Approach", PICK_APPROACH_CONFIG),
         ("Pick", PICK_CONFIG),
-        ("Lift", LIFT_CONFIG),
+        ("Lift", PICK_LIFT_CONFIG),
         ("Transit", TRANSIT_CONFIG),
-        ("Place Above", PLACE_ABOVE_CONFIG),
-        ("Place", PLACE_CONFIG_CLOSED),
-        ("Final", FINAL_CONFIG),
+        ("Place Approach", PLACE_APPROACH_CONFIG),
+        ("Place", PLACE_CONFIG),
+        ("Retreat", PLACE_RETREAT_CONFIG),
     ]
     
-    for name, config in waypoints:
-        pos, _ = get_forward_kinematics(config)
-        print(f"  {name:12s}: x={pos[0]:.4f}, y={pos[1]:.4f}, z={pos[2]:.4f}")
+    for name, config in waypoints_preview:
+        pos, _ = get_forward_kinematics(config, mode='mujoco')
+        print(f"  {name:15s}: x={pos[0]:7.4f}, y={pos[1]:7.4f}, z={pos[2]:7.4f}")
     
-    # Initialize at starting position
+    # Initialize at home
     print("\n" + "-" * 70)
     print("Initializing robot...")
-    set_initial_pose(data, STARTING_CONFIG, use_degrees=True)
-    send_position_command(data, STARTING_CONFIG, use_degrees=True)
+    set_initial_pose(data, HOME_CONFIG, use_degrees=True)
+    send_position_command(data, HOME_CONFIG, use_degrees=True)
     
     # Step to settle
     for _ in range(200):
@@ -278,71 +353,61 @@ def run_pick_and_place():
     with mujoco.viewer.launch_passive(model, data) as viewer:
         # Show pick and place markers
         pick_pos, place_pos = show_pick_place_markers(
-            viewer, PICK_CONFIG, PLACE_CONFIG_CLOSED
+            viewer, PICK_CONFIG, PLACE_CONFIG
         )
         
         print(f"Pick location:  {pick_pos}")
         print(f"Place location: {place_pos}")
         
-        # Brief pause to show initial state
-        print("\nPhase 0: Starting position")
+        # EXECUTION SEQUENCE
         time.sleep(1.0)
         
-        # ======================================================================
-        # Phase 1: Move down to pick
-        # ======================================================================
-        print("Phase 1: Moving to pick position...")
-        smooth_move(model, data, viewer, STARTING_CONFIG, PICK_CONFIG, duration=2.0)
+        print("\nPhase 1: Move to ready position")
+        smooth_move(model, data, viewer, HOME_CONFIG, READY_CONFIG, duration=2.0)
         time.sleep(0.5)
         
-        # ======================================================================
-        # Phase 2: Close gripper
-        # ======================================================================
-        print("Phase 2: Closing gripper...")
-        smooth_move(model, data, viewer, PICK_CONFIG, PICK_CONFIG_CLOSED, duration=0.5)
+        print("Phase 2: Approach pick location")
+        smooth_move(model, data, viewer, READY_CONFIG, PICK_APPROACH_CONFIG, duration=2.0)
         time.sleep(0.5)
         
-        # ======================================================================
-        # Phase 3: Lift object
-        # ======================================================================
-        print("Phase 3: Lifting object...")
-        smooth_move(model, data, viewer, PICK_CONFIG_CLOSED, LIFT_CONFIG, duration=1.5)
-        time.sleep(0.3)
-        
-        # ======================================================================
-        # Phase 4: Transit to place location
-        # ======================================================================
-        print("Phase 4: Transit to place location...")
-        smooth_move(model, data, viewer, LIFT_CONFIG, TRANSIT_CONFIG, duration=1.5)
-        smooth_move(model, data, viewer, TRANSIT_CONFIG, PLACE_ABOVE_CONFIG, duration=1.5)
-        time.sleep(0.3)
-        
-        # ======================================================================
-        # Phase 5: Move down to place
-        # ======================================================================
-        print("Phase 5: Moving down to place...")
-        smooth_move(model, data, viewer, PLACE_ABOVE_CONFIG, PLACE_CONFIG_CLOSED, duration=1.5)
+        print("Phase 3: Lower to pick")
+        smooth_move(model, data, viewer, PICK_APPROACH_CONFIG, PICK_CONFIG, duration=1.5)
         time.sleep(0.5)
         
-        # ======================================================================
-        # Phase 6: Open gripper (release object)
-        # ======================================================================
-        print("Phase 6: Releasing object...")
-        smooth_move(model, data, viewer, PLACE_CONFIG_CLOSED, PLACE_CONFIG_OPEN, duration=0.5)
+        print("Phase 4: Close gripper")
+        smooth_move(model, data, viewer, PICK_CONFIG, PICK_GRASP_CONFIG, duration=0.5)
         time.sleep(0.5)
         
-        # ======================================================================
-        # Phase 7: Retreat
-        # ======================================================================
-        print("Phase 7: Retreating...")
-        smooth_move(model, data, viewer, PLACE_CONFIG_OPEN, FINAL_CONFIG, duration=1.5)
+        print("Phase 5: Lift object")
+        smooth_move(model, data, viewer, PICK_GRASP_CONFIG, PICK_LIFT_CONFIG, duration=1.5)
         time.sleep(0.5)
         
-        # ======================================================================
-        # Phase 8: Return to home
-        # ======================================================================
-        print("Phase 8: Returning to home...")
-        smooth_move(model, data, viewer, FINAL_CONFIG, HOME_CONFIG, duration=2.0)
+        print("Phase 6: Transit to place area")
+        smooth_move(model, data, viewer, PICK_LIFT_CONFIG, TRANSIT_CONFIG, duration=2.0)
+        time.sleep(0.5)
+        
+        print("Phase 7: Approach place location")
+        smooth_move(model, data, viewer, TRANSIT_CONFIG, PLACE_APPROACH_CONFIG, duration=2.0)
+        time.sleep(0.5)
+        
+        print("Phase 8: Lower to place")
+        smooth_move(model, data, viewer, PLACE_APPROACH_CONFIG, PLACE_CONFIG, duration=1.5)
+        time.sleep(0.5)
+        
+        print("Phase 9: Release gripper")
+        smooth_move(model, data, viewer, PLACE_CONFIG, PLACE_RELEASE_CONFIG, duration=0.5)
+        time.sleep(0.5)
+        
+        print("Phase 10: Retreat from place")
+        smooth_move(model, data, viewer, PLACE_RELEASE_CONFIG, PLACE_RETREAT_CONFIG, duration=1.5)
+        time.sleep(0.5)
+        
+        print("Phase 11: Return to ready")
+        smooth_move(model, data, viewer, PLACE_RETREAT_CONFIG, READY_CONFIG, duration=2.0)
+        time.sleep(0.5)
+        
+        print("Phase 12: Return to home")
+        smooth_move(model, data, viewer, READY_CONFIG, HOME_CONFIG, duration=2.0)
         
         print("\n" + "=" * 70)
         print("Pick and Place Complete!")
