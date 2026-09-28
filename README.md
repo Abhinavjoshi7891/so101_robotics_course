@@ -122,10 +122,10 @@ ros2 launch lerobot_description so101_display.launch.py
 **Lab 1.2: Test Forward Kinematics**
 ```bash
 # MuJoCo
-python labs/lab1_2_test_fk_mujoco.py
+python3 labs/lab1_2_test_fk_mujoco.py
 
 # RViz (requires ROS2)
-python labs/lab1_2_test_fk_rviz.py
+python3 labs/lab1_2_test_fk_rviz.py
 ```
 
 ### Lecture 2: Inverse Kinematics
@@ -133,16 +133,16 @@ python labs/lab1_2_test_fk_rviz.py
 **Lab 2.1: Test Inverse Kinematics**
 ```bash
 # MuJoCo
-python labs/lab2_1_test_ik_mujoco.py
+python3 labs/lab2_1_test_ik_mujoco.py
 
 # RViz
-python labs/lab2_1_test_ik_rviz.py
+python3 labs/lab2_1_test_ik_rviz.py
 ```
 
 **Lab 2.2: Using LeRobot's Built-in Kinematics**
 ```bash
 pip install lerobot[kinematics]
-python labs/lab2_2_lerobot_kinematics.py
+python3 labs/lab2_2_lerobot_kinematics.py
 ```
 
 ### Lecture 3: Simulation & Pick-and-Place
@@ -150,7 +150,7 @@ python labs/lab2_2_lerobot_kinematics.py
 **Lab 3: Full Pipeline**
 ```bash
 # MuJoCo pick and place
-python labs/lab3_pick_place_mujoco.py
+python3 labs/lab3_pick_place_mujoco.py
 
 # Gazebo + MoveIt pipeline
 # Terminal 1
@@ -160,8 +160,55 @@ ros2 launch lerobot_controller so101_controller.launch.py
 # Terminal 3
 ros2 launch lerobot_moveit so101_moveit.launch.py
 # Terminal 4
-python labs/lab3_pick_place_gazebo.py
+python3 labs/lab3_pick_place_gazebo.py
 ```
+
+## Hugging Face leLab GUI
+
+`leLab` is Hugging Face's web-based interface for LeRobot (used for robot data collection, visualization, and teleoperation).
+
+### Launching the GUI
+
+Depending on your workflow, you can launch `leLab` using any of the following methods:
+
+#### Option 1: Direct Execution (Fastest)
+Run the executable directly from the local virtual environment without manual activation:
+```bash
+~/Data_Drive/lelab/.venv/bin/lelab
+```
+
+#### Option 2: Activate Environment
+Activate the local virtual environment on your data drive and start the server:
+```bash
+source ~/Data_Drive/lelab/.venv/bin/activate
+lelab
+```
+
+#### Option 3: Terminal Alias (Recommended)
+Add a persistent alias to `~/.bashrc` to run `lelab` from any directory:
+```bash
+echo 'alias lelab="~/Data_Drive/lelab/.venv/bin/lelab"' >> ~/.bashrc
+source ~/.bashrc
+
+# Now launch anytime with:
+lelab
+```
+
+### Hugging Face Authentication & Troubleshooting
+
+To upload datasets or access Hub resources, authenticate your CLI:
+```bash
+~/Data_Drive/lelab/.venv/bin/hf auth login
+```
+
+**Troubleshooting GUI Login Status ("User is already logged in"):**
+If the GUI indicates you are not logged in despite `hf auth login` succeeding:
+1. Click **"I've logged in — recheck"** in the GUI.
+2. Force re-authentication via CLI:
+   ```bash
+   ~/Data_Drive/lelab/.venv/bin/hf auth login --force
+   ```
+3. Alternatively, paste your Hugging Face write-access token directly into the token input field in the GUI.
 
 ## Learning Objectives
 
